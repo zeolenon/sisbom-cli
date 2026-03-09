@@ -4,6 +4,8 @@ CLI Python para interagir com o **SISBOM (CBMRN)** via GraphQL API.
 
 Sem browser. Sem Playwright. Puro `httpx`.
 
+> **Filosofia:** CLI first. Browser só como último recurso (fallback).
+
 ## Instalação
 
 ```bash
@@ -66,6 +68,30 @@ sisbom viaturas --json
 sisbom lotacoes                    # 78 lotações
 ```
 
+### E-Funcional
+
+```bash
+sisbom efuncional                              # Exporta e-funcional do último emitido
+sisbom efuncional --matricula 2415380          # Por matrícula específica
+sisbom efuncional --matricula 2415380 --dest ~/Downloads
+sisbom efuncional --matricula 2415380 --list   # Listar todas as emissões
+sisbom efuncional --json                       # Saída JSON
+```
+
+Fluxo interno:
+1. `FuncionalValida(str_matricula)` → hash permanente da funcional
+2. `LogPrint(type: "militar-funcional")` → hash temporário de impressão
+3. `GET doc_print?hash=<temp>` → PDF com QR code de validação (~1.3MB)
+
+### Marés
+
+```bash
+sisbom mare                                    # Areia Branca (tabuademares.com)
+sisbom mare --local natal                      # Natal
+sisbom mare-sisbom                             # SISBOM API (Natal/RN)
+sisbom mare-sisbom --date 2026-03-08           # Data específica
+```
+
 ### GraphQL Avançado
 
 ```bash
@@ -97,6 +123,7 @@ sisbom query "query Docs(\$year: String){ Docs(year: \$year){ bg_num url } }" \
 | SISBOM GraphQL | `https://us-central1-cfap-app.cloudfunctions.net/api_sisbom` | Efetivo, diárias, viaturas, etc |
 | BG GraphQL | `https://us-central1-cfap-app.cloudfunctions.net/api_bg` | Listar/buscar BGs |
 | Storage | `https://storage.cbm.rn.gov.br/v0/boletins/{year}/{hash}.pdf` | Download PDFs (sem auth) |
+| Reports | `https://us-central1-cfap-app.cloudfunctions.net/api_sisbom/reports/doc_print` | E-Funcional PDF (hash via LogPrint) |
 
 ## Queries GraphQL Disponíveis (principais)
 
@@ -105,6 +132,7 @@ Efetivo: militares, militar, MilitarEfetivo, dt_nascimento
 Diárias: MilitarDiarias, MilitarDiariasBy, MilitarDiariaById
 Férias:  FeriasMilitar, FeriasLotacao, FeriasTurmas
 Permutas: MilitarPermutas, MilitarPermutasBy
+E-Func:  FuncionalValida, FuncionalAtual, MilitarFuncionals, LogPrint (mutation)
 Escalas: MapaGuarnicoes, MapaIndividuals, DiasServicosMilitar
 Frotas:  FrotasViaturas, FrotasAbastecimentos, FrotasOdometros
 BGs:     Docs(year, bg_num), DocById
