@@ -262,6 +262,38 @@ def viaturas_cmd(as_json: bool) -> None:
     console.print(table)
 
 
+# --- Maré ---
+
+
+@cli.command("mare")
+@click.option("--local", default="areia-branca", help="Localidade (slug tabuademares)")
+@click.option("--json", "as_json", is_flag=True)
+def mare_cmd(local: str, as_json: bool) -> None:
+    """Tábua de marés do dia (via tabuademares.com)."""
+    with SISBOMClient() as client:
+        result = client.mare(location=local)
+
+    if as_json:
+        _emit(result, True)
+        return
+
+    console.print(f"\n🌊 [bold]Marés — {result.get('date', 'hoje')}[/bold]")
+    console.print(f"📍 {local.replace('-', ' ').title()}\n")
+
+    for t in result.get("tides", []):
+        icon = "🔵" if t["type"] == "preia-mar" else "🟤"
+        height = t.get("height", "")
+        console.print(f"  {icon} {t['time']}  {t['type'].upper()}  {height}")
+
+    if result.get("sunrise"):
+        console.print(f"\n  🌅 Nascer: {result['sunrise']}  🌇 Pôr: {result.get('sunset', '?')}")
+
+    if result.get("coeficients"):
+        console.print(f"  📊 Coeficientes: {', '.join(result['coeficients'])}")
+
+    console.print()
+
+
 # --- BGs ---
 
 

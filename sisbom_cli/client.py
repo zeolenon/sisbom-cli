@@ -111,10 +111,28 @@ class SISBOMClient:
                 _id
                 forca_id
                 str_nomecurto
+                str_nomeguerra
                 str_matricula
                 str_cpf
-                _patente { str_patente }
-                _lotacao { str_lotacao }
+                _patente
+                str_quadro
+                _lotacao
+                lotacao { N1 N2 N3 }
+                dt_incorporacao
+                index
+                active
+                situacao_status
+                comportamento
+                pessoa {
+                    str_nome
+                    str_sexo
+                    dt_nascimento
+                    str_telefone
+                    str_telefonecelular
+                    str_email
+                    str_tipo_sanguineo
+                    str_escolaridade
+                }
             """
 
         variables: dict[str, Any] = {"active": active}
@@ -218,9 +236,10 @@ class SISBOMClient:
                     _id
                     str_nomecurto
                     str_matricula
-                    dt_nascimento
-                    _patente { str_patente }
-                    _lotacao { str_lotacao }
+                    _patente
+                    _lotacao
+                    lotacao { N1 N2 N3 }
+                    pessoa { dt_nascimento str_telefonecelular }
                 }
             }""",
             variables=variables,
@@ -415,6 +434,108 @@ class SISBOMClient:
             }}"""
         )
         return result.get("Licencas", [])
+
+    # --- Maré (Tides) ---
+
+    def mare(self, location: str = "areia-branca") -> dict:
+        """Get tide data from tabuademares.com.
+
+        Args:
+            location: Location slug (default: areia-branca for RN coast).
+                Other options: natal, macau, mossoro, etc.
+
+        Returns:
+            Dict with date, tides (list of {time, type, height}), sun, coef.
+        """
+        import re
+
+        url = f"https://tabuademares.com/br/rio-grande-do-norte/{location}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        r = self._http.get(url, timeout=15, follow_redirects=True, headers=headers)
+        if r.status_code != 200:
+            raise RuntimeError(f"Failed to fetch tide data: HTTP {r.status_code}")
+
+        text = r.text
+        result: dict[str, Any] = {"location": location, "url": url}
+
+        # Extract date
+        date_match = re.search(
+            r"HOJE,\s+\w+,\s+(\d+\s+DE\s+\w+\s+DE\s+\d{4})", text
+        )
+        if date_match:
+            result["date"] = date_match.group(1)
+
+        tides: list[dict[str, str]] = []
+
+        # Extract from HTML: spans with class 'rojo' (baixa-mar) and 'azul' (preia-mar)
+        # Pattern: <span class='rojo'>baixa-mar</span> foi às <span class='rojo'>0:48</span>
+        baixa_matches = re.findall(
+            r"<span class=['\"]rojo['\"]>baixa-mar</span>.*?<span class=['\"]rojo['\"]>"
+            r"(\d{1,2}:\d{2})</span>",
+            text,
+        )
+        preia_matches = re.findall(
+            r"<span class=['\"]azul['\"]>preia-mar</span>.*?<span class=['\"]azul['\"]>"
+            r"(\d{1,2}:\d{2})</span>",
+            text,
+        )
+
+        # Fallback: simpler pattern from the status divs
+        if not baixa_matches:
+            baixa_matches = re.findall(
+                r"<strong>baixa-mar</strong>\s*<br>\s*(\d{1,2}:\d{2})", text
+            )
+        if not preia_matches:
+            preia_matches = re.findall(
+                r"<strong>preia-mar</strong>\s*<br>\s*(\d{1,2}:\d{2})", text
+            )
+
+        for t in baixa_matches:
+            tides.append({"time": t, "type": "baixa-mar"})
+        for t in preia_matches:
+            tides.append({"time": t, "type": "preia-mar"})
+
+        # Sort by time (padded for correct ordering)
+        tides.sort(key=lambda x: x["time"].zfill(5))
+        result["tides"] = tides
+
+        # Extract tide heights from narrative:
+        # "alturas das marés de hoje são <span class='rojo'>0,8<span ...>m</span></span>, ..."
+        heights_section = re.search(
+            r"alturas das marés.*?</div>", text, re.S
+        )
+        if heights_section:
+            h_matches = re.findall(
+                r"<span class=['\"](?:rojo|azul)['\"]>([\d,]+)",
+                heights_section.group(0),
+            )
+            if h_matches and len(h_matches) == len(tides):
+                for i, h in enumerate(h_matches):
+                    tides[i]["height"] = h.replace(",", ".") + "m"
+
+        # Sun times — wrapped in <span class='naranja'>
+        sun_match = re.search(
+            r"amanheceu.*?<span[^>]*>(\d{1,2}:\d{2})", text
+        )
+        sunset_match = re.search(
+            r"pôr do sol.*?<span[^>]*>(\d{1,2}:\d{2})", text
+        )
+        if sun_match:
+            result["sunrise"] = sun_match.group(1)
+        if sunset_match:
+            result["sunset"] = sunset_match.group(1)
+
+        # Coeficients
+        coef_section = re.search(
+            r"COEFICIENTE DE MARÉS.*?MANHÃ.*?(\d{2,3}).*?TARDE.*?(\d{2,3})", text, re.S
+        )
+        if coef_section:
+            result["coeficients"] = [coef_section.group(1), coef_section.group(2)]
+
+        return result
 
     # --- BGs ---
 
