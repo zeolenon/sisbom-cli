@@ -294,6 +294,30 @@ def mare_cmd(local: str, as_json: bool) -> None:
     console.print()
 
 
+@cli.command("mare-sisbom")
+@click.option("--date", default=None, help="Data (YYYY-MM-DD, default: hoje)")
+@click.option("--json", "as_json", is_flag=True)
+def mare_sisbom_cmd(date: str | None, as_json: bool) -> None:
+    """Tábua de marés do SISBOM (Natal/RN)."""
+    with SISBOMClient() as client:
+        result = client.mare_sisbom(date=date)
+
+    if as_json:
+        _emit(result, True)
+        return
+
+    console.print(f"\n🌊 [bold]Marés SISBOM — {result.get('date', 'hoje')}[/bold]")
+    console.print(f"📍 {result.get('location', 'Natal/RN')}\n")
+
+    for h in result.get("heights", []):
+        height_val = h.get("height", 0)
+        icon = "🔵" if height_val > 1.0 else "🟤"
+        tide_type = "PREIA-MAR" if height_val > 1.0 else "BAIXA-MAR"
+        console.print(f"  {icon} {h['time']}  {tide_type}  {height_val}m")
+
+    console.print()
+
+
 # --- BGs ---
 
 

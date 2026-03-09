@@ -537,6 +537,49 @@ class SISBOMClient:
 
         return result
 
+    # --- Maré SISBOM ---
+
+    def mare_sisbom(self, date: str | None = None) -> dict:
+        """Get tide data from SISBOM API (Natal/RN reference).
+
+        Uses the same Cloud Function the SISBOM Angular app uses.
+        Returns 3 days of tide data (yesterday, today, tomorrow).
+
+        Args:
+            date: Date in YYYY-MM-DD format. None = today.
+
+        Returns:
+            Dict with date, location, heights (list of {time, height}).
+        """
+        from datetime import date as date_cls
+
+        if not date:
+            date = date_cls.today().strftime("%Y-%m-%d")
+
+        url = f"{self._api_url}/ws/tide_table/{date}"
+        r = self._http.get(url, timeout=15)
+        if r.status_code != 200:
+            raise RuntimeError(f"Failed to fetch SISBOM tide data: HTTP {r.status_code}")
+
+        data = r.json()
+        # API returns 3 days: [yesterday, today, tomorrow]
+        today_data = None
+        for entry in data:
+            if entry.get("date") == date:
+                today_data = entry
+                break
+
+        if not today_data and data:
+            today_data = data[1] if len(data) > 1 else data[0]
+
+        return {
+            "date": date,
+            "location": "Natal/RN",
+            "source": "sisbom",
+            "heights": today_data.get("heights", []) if today_data else [],
+            "all_days": data,
+        }
+
     # --- BGs ---
 
     def list_bgs(self, year: str | None = None, bg_num: str | None = None) -> list[dict]:
