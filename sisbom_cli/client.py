@@ -388,6 +388,105 @@ class SISBOMClient:
         )
         return result.get("FrotasViaturas", [])
 
+    # --- Mapa de Força ---
+
+    def mapa_forca_militares(self, date: str, lotacao: str) -> list[dict]:
+        """List militares on the force map for a given date/lotação.
+
+        Args:
+            date: Date string (YYYY-MM-DD).
+            lotacao: Lotação code (e.g. PABM_3GBM_APODI).
+
+        Returns:
+            List of MilitarMapa dicts with bo_diaria (DO checkbox).
+        """
+        result = self._gql(
+            """query MilitaresMapaForca($date: String, $_lotacao: String) {
+                MilitaresMapaForca(date: $date, _lotacao: $_lotacao) {
+                    _id
+                    str_nomecurto
+                    str_matricula
+                    bo_diaria
+                    atividade
+                    _lotacao
+                    index
+                    _patente
+                    updated_at
+                }
+            }""",
+            variables={"date": date, "_lotacao": lotacao},
+        )
+        mils = result.get("MilitaresMapaForca", [])
+        # API ignores _lotacao filter — filter client-side
+        if lotacao:
+            mils = [m for m in mils if m.get("_lotacao") == lotacao]
+        return mils
+
+    def mapa_forca_guarnicoes(self, date: str | None = None, lotacao: str | None = None) -> list[dict]:
+        """List guarnições with full garrison composition.
+
+        Uses MapaGuarnicoesMilitar (date-filtered server-side).
+        Filters by lotacao client-side.
+        """
+        variables: dict[str, Any] = {}
+        if date:
+            variables["date"] = date
+
+        result = self._gql(
+            """query MapaGuarnicoesMilitar($date: String) {
+                MapaGuarnicoesMilitar(date: $date) {
+                    _id
+                    date
+                    _lotacao
+                    atividade
+                    atividade_extra
+                    _viatura
+                    prefixo
+                    bf_cmt
+                    bo_cad
+                    str_alteracoes
+                    str_alteracoes_vtr
+                    guarnicao {
+                        _id
+                        bo_ativo
+                        bo_diaria
+                        index
+                        str_funcao
+                        str_matricula
+                        str_nomecurto
+                        str_cpf
+                    }
+                }
+            }""",
+            variables=variables if variables else None,
+        )
+        gus = result.get("MapaGuarnicoesMilitar", [])
+        if lotacao:
+            gus = [g for g in gus if g.get("_lotacao") == lotacao]
+        if date:
+            gus = [g for g in gus if g.get("date") == date]
+        return gus
+
+    def mapa_forca_viaturas(self, lotacao: str, data: str) -> list[dict]:
+        """List viaturas available on the force map.
+
+        Args:
+            lotacao: Lotação code.
+            data: Date string (YYYY-MM-DD).
+        """
+        result = self._gql(
+            """query FrotasViaturasMapaForca($lotacao: String, $data: String) {
+                FrotasViaturasMapaForca(lotacao: $lotacao, data: $data) {
+                    _id
+                    prefixo
+                    placa
+                    modelo
+                }
+            }""",
+            variables={"lotacao": lotacao, "data": data},
+        )
+        return result.get("FrotasViaturasMapaForca", [])
+
     # --- Ocorrências ---
 
     def ocorrencias(self, fields: str | None = None) -> list[dict]:
