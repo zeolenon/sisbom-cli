@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from typing import Any
 
 import httpx
 
 from .auth import get_credentials, load_token, save_token
 from .config import API_BG, API_URL, STORAGE_URL
+
+# GraphQL error messages that indicate an auth/token problem
+_AUTH_ERROR_KEYWORDS = (
+    "not authenticated",
+    "unauthorized",
+    "jwt expired",
+    "invalid token",
+    "token inválido",
+    "não autenticado",
+    "unauthenticated",
+    "authentication",
+)
 
 
 class SISBOMClient:
@@ -17,6 +30,7 @@ class SISBOMClient:
     def __init__(self, api_url: str | None = None) -> None:
         self._api_url = api_url or API_URL
         self._token: str | None = None
+        self._in_auth_flow: bool = False  # guard against recursive _ensure_auth
         self._http = httpx.Client(
             timeout=30,
             follow_redirects=True,
@@ -34,6 +48,40 @@ class SISBOMClient:
 
     def __exit__(self, *args: Any) -> None:
         self.close()
+
+    # --- Auth helpers ---
+
+    def _ensure_auth(self) -> None:
+        """Garante que há token válido. Tenta cache, depois login fresh.
+
+        Protegido contra recursão: não faz nada se já estiver num fluxo de login.
+        """
+        if self._in_auth_flow:
+            return
+        if self._token:
+            return
+        # Tenta carregar do disco
+        cached = load_token()
+        if cached:
+            self._token = cached
+            return
+        # Login fresh
+        result = self.login()
+        if not result.get("ok"):
+            raise RuntimeError("Auto-login falhou — verifique credenciais no Bitwarden")
+
+    @contextmanager
+    def batch_mode(self):
+        """Login uma vez, reutiliza token pra N operações.
+
+        Usage::
+
+            with client.batch_mode():
+                for m in militares:
+                    client.some_query(m)
+        """
+        self._ensure_auth()
+        yield self
 
     # --- Auth ---
 
@@ -58,16 +106,20 @@ class SISBOMClient:
         if not cpf or not password:
             cpf, password = get_credentials()
 
-        # Step 1: seiLogin mutation
-        result = self._gql(
-            """mutation seiLogin($str_cpf: String, $password: String){
-                seiLogin(str_cpf: $str_cpf, password: $password){
-                    forca_id
-                    token
-                }
-            }""",
-            variables={"str_cpf": cpf, "password": password},
-        )
+        # Step 1: seiLogin mutation — marcar _in_auth_flow para evitar recursão em _ensure_auth
+        self._in_auth_flow = True
+        try:
+            result = self._gql(
+                """mutation seiLogin($str_cpf: String, $password: String){
+                    seiLogin(str_cpf: $str_cpf, password: $password){
+                        forca_id
+                        token
+                    }
+                }""",
+                variables={"str_cpf": cpf, "password": password},
+            )
+        finally:
+            self._in_auth_flow = False
 
         sei_login = result.get("seiLogin")
         if not sei_login or not sei_login.get("token"):
@@ -768,6 +820,18 @@ class SISBOMClient:
         variables: dict | None = None,
     ) -> dict:
         """Execute a GraphQL query against an arbitrary base URL."""
+        self._ensure_auth()
+        return self._gql_url_raw(base_url, query, variables=variables, _retry=True)
+
+    def _gql_url_raw(
+        self,
+        base_url: str,
+        query: str,
+        *,
+        variables: dict | None = None,
+        _retry: bool = False,
+    ) -> dict:
+        """Internal: execute GraphQL against arbitrary URL, with optional 1x retry on auth error."""
         payload: dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
@@ -781,12 +845,26 @@ class SISBOMClient:
             json=payload,
             headers=headers,
         )
+
+        # Auth error on HTTP level → retry once
+        if _retry and r.status_code in (401, 403):
+            self._token = None
+            self.login()
+            return self._gql_url_raw(base_url, query, variables=variables, _retry=False)
+
         if r.status_code != 200:
             raise RuntimeError(f"API error: HTTP {r.status_code} — {r.text[:200]}")
+
         data = r.json()
         if "errors" in data:
             msg = "; ".join(e.get("message", str(e)) for e in data["errors"])
+            # Auth error on GraphQL level → retry once
+            if _retry and any(kw in msg.lower() for kw in _AUTH_ERROR_KEYWORDS):
+                self._token = None
+                self.login()
+                return self._gql_url_raw(base_url, query, variables=variables, _retry=False)
             raise RuntimeError(f"GraphQL error: {msg}")
+
         return data.get("data", {})
 
     def _gql(
@@ -797,6 +875,10 @@ class SISBOMClient:
         endpoint: str = "graphql",
     ) -> dict:
         """Execute a GraphQL query/mutation.
+
+        Automatically ensures a valid token is present before executing.
+        On auth errors (HTTP 401/403 or GraphQL auth message), refreshes token
+        and retries once.
 
         Args:
             query: GraphQL query string.
@@ -809,6 +891,18 @@ class SISBOMClient:
         Raises:
             RuntimeError: On GraphQL errors.
         """
+        self._ensure_auth()
+        return self._gql_raw(query, variables=variables, endpoint=endpoint, _retry=True)
+
+    def _gql_raw(
+        self,
+        query: str,
+        *,
+        variables: dict | None = None,
+        endpoint: str = "graphql",
+        _retry: bool = False,
+    ) -> dict:
+        """Internal: execute GraphQL, with optional 1x retry on auth error."""
         payload: dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
@@ -823,6 +917,12 @@ class SISBOMClient:
             headers=headers,
         )
 
+        # Auth error on HTTP level → retry once
+        if _retry and r.status_code in (401, 403):
+            self._token = None
+            self.login()
+            return self._gql_raw(query, variables=variables, endpoint=endpoint, _retry=False)
+
         if r.status_code != 200:
             raise RuntimeError(f"API error: HTTP {r.status_code} — {r.text[:200]}")
 
@@ -831,6 +931,11 @@ class SISBOMClient:
         if "errors" in data:
             errors = data["errors"]
             msg = "; ".join(e.get("message", str(e)) for e in errors)
+            # Auth error on GraphQL level → retry once
+            if _retry and any(kw in msg.lower() for kw in _AUTH_ERROR_KEYWORDS):
+                self._token = None
+                self.login()
+                return self._gql_raw(query, variables=variables, endpoint=endpoint, _retry=False)
             raise RuntimeError(f"GraphQL error: {msg}")
 
         return data.get("data", {})
