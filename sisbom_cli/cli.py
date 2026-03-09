@@ -390,6 +390,56 @@ def bg_download_cmd(bg_num: str, year: str | None, dest: str | None, as_json: bo
     click.echo(f"✅ BG {bg['bg_num']}/{bg['year']} → {path}")
 
 
+# --- E-Funcional ---
+
+
+@cli.command("efuncional")
+@click.option("--matricula", default=None, help="Matrícula do militar (default: usuário logado)")
+@click.option("--dest", default=None, help="Diretório destino do PDF")
+@click.option("--list", "list_only", is_flag=True, help="Listar emissões sem exportar")
+@click.option("--json", "as_json", is_flag=True)
+def efuncional_cmd(matricula: str | None, dest: str | None, list_only: bool, as_json: bool) -> None:
+    """Exportar e-Funcional como PDF."""
+    with SISBOMClient() as client:
+        client.login()
+
+        if list_only:
+            emissions = client.efuncional_list(str_matricula=matricula)
+            if as_json:
+                _emit(emissions, True)
+                return
+            if not emissions:
+                click.echo("Nenhuma emissão encontrada.")
+                return
+            table = Table(title="Emissões e-Funcional")
+            table.add_column("ID")
+            table.add_column("Posto/Grad")
+            table.add_column("Nome Guerra")
+            table.add_column("Matrícula")
+            table.add_column("Ativa")
+            for e in emissions:
+                table.add_row(
+                    e.get("_id", ""),
+                    e.get("str_patente", ""),
+                    e.get("str_nomeguerra", ""),
+                    e.get("str_matricula", ""),
+                    "✅" if e.get("active") else "❌",
+                )
+            console.print(table)
+            return
+
+        result = client.efuncional(str_matricula=matricula, dest_dir=dest)
+
+    if as_json:
+        _emit(result, True)
+        return
+
+    click.echo(f"✅ E-Funcional exportada!")
+    click.echo(f"   📄 {result['path']} ({result['size']:,} bytes)")
+    click.echo(f"   👤 {result['patente']} {result['nome']} — Mat. {result['matricula']}")
+    click.echo(f"   🔑 Verificação: {result['verify']} | CRC: {result['crc']}")
+
+
 # --- Raw Query ---
 
 

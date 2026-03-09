@@ -736,6 +736,137 @@ class SISBOMClient:
 
         return data.get("data", {})
 
+    # --- E-Funcional ---
+
+    def efuncional(
+        self,
+        str_matricula: str | None = None,
+        *,
+        dest_dir: str | None = None,
+    ) -> dict:
+        """Export e-Funcional as PDF.
+
+        Args:
+            str_matricula: Military registration number. If None, uses logged-in user.
+            dest_dir: Destination directory for PDF. Defaults to current dir.
+
+        Returns:
+            Dict with path, hash, verify, crc keys.
+        """
+        from datetime import datetime, timezone, timedelta
+        from pathlib import Path
+
+        # Step 1: Get user ID and matricula
+        me = self.me()
+        if not me:
+            raise RuntimeError("Não autenticado — rode login primeiro")
+        user_id = me["_id"]
+
+        # Step 2: Get funcional data (hash)
+        query_vars: dict[str, str] = {}
+        if str_matricula:
+            query_vars["str_matricula"] = str_matricula
+
+        q = "query($str_matricula: String)"  if str_matricula else "query"
+        args = "(str_matricula: $str_matricula)" if str_matricula else ""
+
+        result = self._gql(
+            f"""{q} {{
+                FuncionalValida{args} {{
+                    _id str_patente str_quadro str_nomeguerra
+                    str_matricula hash
+                    expedicao_id {{ local data }}
+                }}
+            }}""",
+            variables=query_vars or None,
+        )
+
+        funcional = result.get("FuncionalValida")
+        if not funcional or not funcional.get("hash"):
+            raise RuntimeError("E-Funcional não encontrada para essa matrícula")
+
+        func_hash = funcional["hash"]
+        nome = funcional.get("str_nomeguerra", "militar")
+        patente = funcional.get("str_patentesigla") or funcional.get("str_patente", "")
+        matricula = funcional.get("str_matricula", "")
+
+        # Step 3: LogPrint mutation to get temporary print hash
+        tz = timezone(timedelta(hours=-3))
+        now = datetime.now(tz).isoformat()
+
+        print_result = self._gql(
+            """mutation LogPrint($data: String, $type: String, $_user: String, $args: String, $printed_at: String){
+                LogPrint(data: $data, type: $type, _user: $_user, args: $args, printed_at: $printed_at){
+                    _id hash verify crc
+                }
+            }""",
+            variables={
+                "type": "militar-funcional",
+                "_user": user_id,
+                "args": json.dumps({"hash": func_hash}),
+                "printed_at": now,
+            },
+        )
+
+        log_print = print_result.get("LogPrint")
+        if not log_print or not log_print.get("hash"):
+            raise RuntimeError("Falha ao gerar hash de impressão (LogPrint)")
+
+        print_hash = log_print["hash"]
+
+        # Step 4: Download PDF from doc_print endpoint
+        headers = {}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        r = self._http.get(
+            f"{self._api_url}/reports/doc_print?hash={print_hash}",
+            headers=headers,
+        )
+
+        if r.status_code != 200 or len(r.content) < 100:
+            raise RuntimeError(f"Falha ao baixar PDF: HTTP {r.status_code}, {len(r.content)} bytes")
+
+        # Step 5: Save PDF
+        out_dir = Path(dest_dir) if dest_dir else Path(".")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"efuncional_{nome.lower()}_{matricula}.pdf"
+        out_path = out_dir / filename
+        out_path.write_bytes(r.content)
+
+        return {
+            "path": str(out_path),
+            "size": len(r.content),
+            "nome": nome,
+            "patente": patente,
+            "matricula": matricula,
+            "hash": func_hash,
+            "print_hash": print_hash,
+            "verify": log_print.get("verify"),
+            "crc": log_print.get("crc"),
+        }
+
+    def efuncional_list(self, str_matricula: str | None = None) -> list[dict]:
+        """List all e-Funcional emissions for a military member."""
+        query_vars: dict[str, str] = {}
+        if str_matricula:
+            query_vars["str_matricula"] = str_matricula
+
+        q = "query($str_matricula: String)" if str_matricula else "query"
+        args = "(str_matricula: $str_matricula)" if str_matricula else ""
+
+        result = self._gql(
+            f"""{q} {{
+                MilitarFuncionals{args} {{
+                    _id str_patente str_quadro str_nomeguerra
+                    str_matricula hash active
+                }}
+            }}""",
+            variables=query_vars or None,
+        )
+
+        return result.get("MilitarFuncionals", [])
+
     def raw_query(self, query: str, variables: dict | None = None) -> dict:
         """Execute a raw GraphQL query and return full data dict."""
         return self._gql(query, variables=variables)
