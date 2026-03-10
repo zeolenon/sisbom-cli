@@ -113,3 +113,4 @@ def save_token(token: str, expires_ms: int | None = None) -> None:
             "saved_at": time.time(),
         })
     )
+    TOKEN_PATH.chmod(0o600)  # restrict access — token is a credential

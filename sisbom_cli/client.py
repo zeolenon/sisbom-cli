@@ -91,17 +91,15 @@ class SISBOMClient:
         If cpf/password not provided, reads from Bitwarden vault.
         Returns user info dict.
         """
-        # Try cached token first
+        # Try cached token first — trust time-based validation from load_token().
+        # Skipping me() round-trip here: saves ~800ms and avoids a recursion risk
+        # where _gql_raw() retry → login() → me() → _gql_raw() retry → login() ...
+        # If the cached token is actually server-rejected, the next API call will
+        # trigger the retry/re-login path in _gql_raw() automatically.
         cached = load_token()
         if cached:
             self._token = cached
-            # Verify token still works
-            try:
-                me = self.me()
-                if me:
-                    return {"ok": True, "user": me, "cached": True}
-            except Exception:
-                self._token = None
+            return {"ok": True, "cached": True}
 
         if not cpf or not password:
             cpf, password = get_credentials()
