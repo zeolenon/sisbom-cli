@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+venv/
+.venv/
+
+# Token/credentials (never commit)
+token
+*.session
+credentials.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Context (local dev)
+.context/
+PLAN.md

@@ -1,2 +1,0 @@
-[console_scripts]
-sisbom = sisbom_cli.cli:cli
