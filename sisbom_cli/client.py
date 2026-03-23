@@ -370,6 +370,90 @@ class SISBOMClient:
 
     # --- Férias ---
 
+    def ferias_exercicios(self) -> list[dict]:
+        """List available vacation exercise years."""
+        result = self._gql("""query ExerciciosFerias { ExerciciosFerias { _id } }""")
+        return result.get("ExerciciosFerias", [])
+
+    def ferias_turmas(self, str_ano: str) -> list[dict]:
+        """List vacation groups for a given exercise year."""
+        result = self._gql(
+            """query FeriasTurmas($str_ano: String) {
+                FeriasTurmas(str_ano: $str_ano) {
+                    _id str_ano str_turmaferias dt_inicio dt_fim
+                }
+            }""",
+            variables={"str_ano": str_ano},
+        )
+        return result.get("FeriasTurmas", [])
+
+    def ferias_turma_detalhe(
+        self,
+        turma_id: str,
+        str_ano: str,
+        turma_num: str,
+        dt_inicio: str | None = None,
+        dt_fim: str | None = None,
+        lotacao: str | None = None,
+    ) -> list[dict]:
+        """Get detailed vacation info for all soldiers in a group."""
+        result = self._gql(
+            """query FeriasTurmasDetalhe(
+                $_id: String,
+                $str_ano: String,
+                $str_turmaferias: String,
+                $str_matricula: String,
+                $lotacao: String
+            ) {
+                FeriasTurmasDetalhe(
+                    _id: $_id,
+                    str_ano: $str_ano,
+                    str_turmaferias: $str_turmaferias,
+                    str_matricula: $str_matricula,
+                    lotacao: $lotacao
+                ) {
+                    _id _militar _turma
+                    militar { str_nomecurto str_matricula }
+                    turma { str_ano dt_inicio dt_fim }
+                    periods {
+                        _id str_ano active dt_inicio dt_fim int_dias
+                        created_at _reaprazados
+                        reaprazado_por { _id str_nomecurto str_matricula }
+                        str_justificativa
+                    }
+                }
+            }""",
+            variables={
+                "_id": turma_id,
+                "str_ano": str_ano,
+                "str_turmaferias": turma_num,
+                "str_matricula": None,
+                "lotacao": lotacao,
+            },
+        )
+        return result.get("FeriasTurmasDetalhe", [])
+
+    def ferias_reaprazar(self, ferias_militar_id: str, periods: list[dict]) -> dict:
+        """Execute vacation rescheduling mutation.
+
+        Args:
+            ferias_militar_id: The FeriasMilitar._id
+            periods: Full list of periods (original + new ones)
+
+        Returns:
+            Dict with status and msg
+        """
+        result = self._gql(
+            """mutation reaprazarFerias($input: ReaprazamentoInput!) {
+                reaprazarFerias(input: $input) {
+                    status
+                    msg
+                }
+            }""",
+            variables={"input": {"_id": ferias_militar_id, "periods": periods}},
+        )
+        return result.get("reaprazarFerias", {})
+
     def ferias_lotacao(self, fields: str | None = None) -> list[dict]:
         """List férias by lotação."""
         if not fields:
@@ -791,11 +875,23 @@ class SISBOMClient:
         dest = Path(dest_dir) if dest_dir else Path.home() / "Downloads"
         dest.mkdir(parents=True, exist_ok=True)
 
-        # Build filename: BG_040_2026.pdf or BG_Adit_039_2026.pdf
+        # Build filename: BG_040_2026-03-06.pdf or BG_Adit_039_2026-03-05.pdf
         bg_num = bg.get("bg_num", "").strip()
         year = bg.get("year", "")
         safe_num = bg_num.replace(" ", "_")
-        filename = f"BG_{safe_num}_{year}.pdf"
+
+        # Include date from date_ref if available
+        date_ref = bg.get("date_ref")
+        date_suffix = ""
+        if date_ref:
+            try:
+                ts = int(date_ref) / 1000 if int(date_ref) > 1e10 else int(date_ref)
+                from datetime import datetime as _dt
+                date_suffix = _dt.fromtimestamp(ts).strftime("-%m-%d")
+            except (ValueError, TypeError, OSError):
+                pass
+
+        filename = f"BG_{safe_num}_{year}{date_suffix}.pdf"
         out_path = dest / filename
 
         if out_path.exists():

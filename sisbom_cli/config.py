@@ -15,10 +15,8 @@ WP_URL = "https://api.sisbom.cbm.rn.gov.br"
 TOKEN_PATH = Path(os.environ.get("SISBOM_TOKEN_PATH", Path.home() / ".config" / "sisbom-cli" / "token"))
 
 # Bitwarden
-BW_ITEM_NAME = "SEI SISBOM RN CBMRN"
-BW_SESSION_PATH = Path.home() / ".openclaw" / ".bw_session"
+BW_ITEM_NAME = os.environ.get("SISBOM_BW_ITEM", "SEI SISBOM RN CBMRN")
+BW_SESSION_PATH = Path(os.environ.get("BW_SESSION_PATH", Path.home() / ".bw_session"))
 
-# CPF (set via SISBOM_CPF env var or fish universal var)
-# Leo's CPF is stored as SISBOM_CPF=11199338702 in fish universal vars
-# Also hardcoded as fallback for non-interactive scripts
-DEFAULT_CPF = "11199338702"
+# CPF — must be set via SISBOM_CPF env var or Bitwarden vault custom field
+DEFAULT_CPF = os.environ.get("SISBOM_CPF", "")

@@ -828,5 +828,313 @@ def mapa_forca_export_cmd(lotacao: str, mes: str | None, fmt: str, output: str |
         click.echo(content)
 
 
+# --- Férias Reaprazamento ---
+
+
+@cli.command("ferias-reaprazar")
+@click.option("--matricula", default=None, help="Matrícula do militar (ex: 2241986)")
+@click.option("--nome", default=None, help="Nome ou parte do nome (str_nomecurto)")
+@click.option("--exercicio", default=None, help="Ano do exercício (ex: 2025, default: último disponível)")
+@click.option("--lotacao", default=None, help="Filtro de lotação (ex: 1CAT, 3GBM)")
+@click.option("--periodos", required=True, help='Novos períodos: "DD/MM/YYYY-DD/MM/YYYY,..." (múltiplos separados por vírgula)')
+@click.option("--justificativa", required=True, help="Justificativa do reaprazamento")
+@click.option("--dry-run", is_flag=True, help="Mostrar payload sem executar")
+@click.option("--json", "as_json", is_flag=True, help="Saída em JSON")
+def ferias_reaprazar_cmd(
+    matricula: str | None,
+    nome: str | None,
+    exercicio: str | None,
+    lotacao: str | None,
+    periodos: str,
+    justificativa: str,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    """Reaprazar (reprogramar) férias de um militar."""
+    import uuid
+    from datetime import datetime, timezone, timedelta, date as dt_date
+
+    # Validações iniciais
+    if not matricula and not nome:
+        raise click.UsageError("Informe --matricula ou --nome para identificar o militar.")
+    if not justificativa.strip():
+        raise click.UsageError("A --justificativa não pode ser vazia.")
+
+    # Parsear períodos novos
+    def parse_periodo(s: str) -> tuple[dt_date, dt_date]:
+        parts = s.strip().split("-")
+        if len(parts) != 2:
+            raise click.UsageError(f"Formato inválido de período: '{s}'. Use DD/MM/YYYY-DD/MM/YYYY")
+        try:
+            inicio = datetime.strptime(parts[0].strip(), "%d/%m/%Y").date()
+            fim = datetime.strptime(parts[1].strip(), "%d/%m/%Y").date()
+        except ValueError as e:
+            raise click.UsageError(f"Data inválida em '{s}': {e}")
+        if fim < inicio:
+            raise click.UsageError(f"dt_fim ({fim}) é anterior a dt_inicio ({inicio}) em '{s}'")
+        return inicio, fim
+
+    novos_periodos_parsed: list[tuple[dt_date, dt_date]] = []
+    for chunk in periodos.split(","):
+        novos_periodos_parsed.append(parse_periodo(chunk))
+
+    with SISBOMClient() as client:
+        client.login()
+
+        # Buscar exercícios disponíveis
+        exercicios = client.ferias_exercicios()
+        if not exercicios:
+            click.echo("❌ Nenhum exercício de férias encontrado.")
+            return
+
+        exercicio_ids = [e["_id"] for e in exercicios]
+
+        # Escolher exercício
+        if exercicio:
+            str_ano = str(exercicio)
+        else:
+            # Último exercício disponível (maior _id que coincide com ano)
+            anos = sorted(exercicio_ids, reverse=True)
+            str_ano = anos[0]
+
+        if str_ano not in exercicio_ids:
+            click.echo(f"❌ Exercício '{str_ano}' não encontrado. Disponíveis: {', '.join(exercicio_ids)}")
+            return
+
+        # Buscar turmas do exercício
+        turmas = client.ferias_turmas(str_ano)
+        if not turmas:
+            click.echo(f"❌ Nenhuma turma encontrada para exercício {str_ano}.")
+            return
+
+        # Para cada turma, buscar detalhe e encontrar o militar
+        encontrado: dict | None = None
+        turma_info: dict | None = None
+        all_militares_found: list[dict] = []
+
+        for turma in turmas:
+            turma_id = turma["_id"]
+            turma_num = turma.get("str_turmaferias", "")
+            dt_inicio_turma = turma.get("dt_inicio", "")
+            dt_fim_turma = turma.get("dt_fim", "")
+
+            detalhe = client.ferias_turma_detalhe(
+                turma_id=turma_id,
+                str_ano=str_ano,
+                turma_num=str(turma_num),
+                dt_inicio=dt_inicio_turma,
+                dt_fim=dt_fim_turma,
+                lotacao=lotacao,
+            )
+
+            for item in detalhe:
+                mil = item.get("militar", {})
+                mil_nome = mil.get("str_nomecurto", "")
+                mil_mat = mil.get("str_matricula", "")
+
+                match = False
+                if matricula:
+                    # Normalizar matrícula removendo pontos/traços
+                    mat_clean = "".join(c for c in (mil_mat or "") if c.isdigit())
+                    query_clean = "".join(c for c in matricula if c.isdigit())
+                    if mat_clean == query_clean or mil_mat == matricula:
+                        match = True
+                elif nome:
+                    if nome.upper() in mil_nome.upper():
+                        match = True
+
+                if match:
+                    all_militares_found.append({"item": item, "turma": turma})
+
+        if not all_militares_found:
+            click.echo(f"❌ Militar não encontrado nos critérios fornecidos.")
+            if lotacao:
+                click.echo(f"   Filtro de lotação: {lotacao}")
+            click.echo(f"   Exercício: {str_ano}")
+            return
+
+        if len(all_militares_found) > 1:
+            click.echo(f"⚠️  Múltiplos militares encontrados ({len(all_militares_found)}). Especifique mais:")
+            for m in all_militares_found:
+                mil = m["item"].get("militar", {})
+                t = m["turma"]
+                click.echo(f"   {mil.get('str_nomecurto')} ({mil.get('str_matricula')}) — Turma {t.get('str_turmaferias')} {t.get('dt_inicio')} → {t.get('dt_fim')}")
+            return
+
+        encontrado = all_militares_found[0]["item"]
+        turma_info = all_militares_found[0]["turma"]
+
+        # Identificar período original ativo
+        periods_raw = encontrado.get("periods", [])
+        periodo_original = next(
+            (p for p in periods_raw if p.get("active") is True and not p.get("_reaprazados")),
+            None,
+        )
+        # Fallback: primeiro período ativo
+        if not periodo_original:
+            periodo_original = next((p for p in periods_raw if p.get("active") is True), None)
+
+        if not periodo_original:
+            click.echo("❌ Nenhum período ativo encontrado para este militar.")
+            return
+
+        dias_original = periodo_original.get("int_dias", 0)
+        dias_novos = sum((fim - ini).days + 1 for ini, fim in novos_periodos_parsed)
+
+        # Validação: soma dos dias deve ser igual ao original
+        if dias_novos != dias_original:
+            click.echo(
+                f"❌ Soma dos dias dos novos períodos ({dias_novos}) "
+                f"≠ dias do período original ({dias_original})."
+            )
+            click.echo(f"   Os {dias_original} dias precisam ser distribuídos exatamente.")
+            return
+
+        # Obter ID do usuário logado
+        me = client.me()
+        meu_id = me.get("_id") if me else None
+
+        # Montar timezone
+        tz = timezone(timedelta(hours=-3))
+        now_iso = datetime.now(tz).isoformat()
+
+        # Construir lista de períodos do payload
+        id_periodo_original = periodo_original["_id"]
+
+        payload_periods: list[dict] = [
+            {
+                "_id": id_periodo_original,
+                "created_at": periodo_original.get("created_at"),
+                "active": False,
+                "int_dias": dias_original,
+                "dt_inicio": periodo_original["dt_inicio"],
+                "dt_fim": periodo_original["dt_fim"],
+            }
+        ]
+
+        for ini, fim in novos_periodos_parsed:
+            periodo_id = str(uuid.uuid1())
+            dias = (fim - ini).days + 1
+            new_period: dict = {
+                "_id": periodo_id,
+                "created_at": now_iso,
+                "active": True,
+                "int_dias": dias,
+                "dt_inicio": ini.isoformat(),
+                "dt_fim": fim.isoformat(),
+                "_reaprazado_por": meu_id,
+                "_reaprazados": [id_periodo_original],
+                "str_justificativa": justificativa,
+            }
+            payload_periods.append(new_period)
+
+        ferias_militar_id = encontrado["_id"]
+        mil = encontrado.get("militar", {})
+        mil_nome = mil.get("str_nomecurto", "?")
+        mil_mat = mil.get("str_matricula", "?")
+
+        turma_num = turma_info.get("str_turmaferias", "?")
+        turma_ini = turma_info.get("dt_inicio", "")[:10]
+        turma_fim = turma_info.get("dt_fim", "")[:10]
+
+        if dry_run or as_json:
+            payload_out = {
+                "input": {
+                    "_id": ferias_militar_id,
+                    "periods": payload_periods,
+                }
+            }
+            if as_json or dry_run:
+                if dry_run:
+                    console.print(f"\n[bold yellow]🔍 DRY-RUN — payload que seria enviado:[/bold yellow]\n")
+                click.echo(json.dumps(payload_out, ensure_ascii=False, indent=2, default=str))
+                if dry_run:
+                    console.print(f"\n[dim]Militar: {mil_nome} ({mil_mat}) | Exercício {str_ano} | Turma {turma_num}[/dim]")
+                    console.print(f"[dim]Dias originais: {dias_original} | Dias novos: {dias_novos}[/dim]")
+                return
+
+        # Executar mutation
+        result = client.ferias_reaprazar(ferias_militar_id, payload_periods)
+
+        status = result.get("status", "")
+        msg = result.get("msg", "")
+
+        if status not in ("ok", "success", "200") and status:
+            # Checar se veio erro
+            if "err" in status.lower() or "fail" in status.lower():
+                console.print(f"\n❌ Erro: {msg or status}")
+                return
+
+        # Re-consultar detalhe atualizado
+        try:
+            detalhe_novo = client.ferias_turma_detalhe(
+                turma_id=turma_info["_id"],
+                str_ano=str_ano,
+                turma_num=str(turma_num),
+                dt_inicio=turma_info.get("dt_inicio", ""),
+                dt_fim=turma_info.get("dt_fim", ""),
+                lotacao=lotacao,
+            )
+            # Encontrar o militar novamente
+            item_novo = next(
+                (
+                    x for x in detalhe_novo
+                    if x.get("_id") == ferias_militar_id
+                ),
+                None,
+            )
+            periods_final = item_novo.get("periods", []) if item_novo else payload_periods
+        except Exception:
+            periods_final = payload_periods
+
+        # Exibir tabela rich com resultado
+        def fmt_date(s: str | None) -> str:
+            if not s:
+                return "—"
+            try:
+                return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+            except ValueError:
+                return s[:10]
+
+        def fmt_turma_date(s: str | None) -> str:
+            return fmt_date(s)
+
+        ini_fmt = fmt_turma_date(turma_ini)
+        fim_fmt = fmt_turma_date(turma_fim)
+
+        console.print(f"\n[bold]Reaprazamento de Férias — {mil_nome} ({mil_mat})[/bold]")
+        console.print(f"[dim]Exercício {str_ano} | Turma {turma_num} | {ini_fmt} — {fim_fmt}[/dim]\n")
+
+        table = Table(show_header=True)
+        table.add_column("Dias", justify="center")
+        table.add_column("Início")
+        table.add_column("Término")
+        table.add_column("Status")
+        table.add_column("Reprogramado Por")
+
+        for p in sorted(periods_final, key=lambda x: x.get("dt_inicio", "")):
+            ativo = p.get("active", True)
+            status_str = "[green]ATIVO[/green]" if ativo else "[dim]INATIVO[/dim]"
+            reprog_por = p.get("reaprazado_por") or p.get("_reaprazado_por")
+            if isinstance(reprog_por, dict):
+                reprog_str = reprog_por.get("str_nomecurto") or reprog_por.get("_id", "—")[:8] + "…"
+            elif isinstance(reprog_por, str):
+                reprog_str = reprog_por[:8] + "…" if reprog_por else "—"
+            else:
+                reprog_str = "—"
+            table.add_row(
+                str(p.get("int_dias", "?")),
+                fmt_date(p.get("dt_inicio")),
+                fmt_date(p.get("dt_fim")),
+                status_str,
+                reprog_str,
+            )
+
+        console.print(table)
+        console.print(f"\n✅ Reaprazamento registrado com sucesso")
+        if msg:
+            console.print(f"   [dim]{msg}[/dim]")
+
+
 if __name__ == "__main__":
     cli()
