@@ -126,6 +126,21 @@ sisbom mare-sisbom                             # SISBOM API (Natal/RN)
 sisbom mare-sisbom --date 2026-03-08           # Data específica
 ```
 
+### Férias / reaprazamento
+
+O comando atual de reaprazamento altera os períodos do registro de férias do exercício. Trate como operação destrutiva e use `--dry-run` antes de executar.
+
+```bash
+sisbom ferias-reaprazar \
+  --matricula 2433192 \
+  --exercicio 2025 \
+  --periodos "03/08/2026-12/08/2026,09/09/2026-18/09/2026,12/10/2026-21/10/2026" \
+  --justificativa "Conforme solicitação SEI <processo>" \
+  --dry-run
+```
+
+Notas operacionais e melhorias recomendadas estão em [`docs/ferias-reaprazamento-safety.md`](docs/ferias-reaprazamento-safety.md).
+
 ### GraphQL Avançado
 
 ```bash
