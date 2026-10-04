@@ -11,6 +11,7 @@ from rich.table import Table
 
 from ..sisdo import SISDOClient, STATUSES
 from .escalador_sisdo import escala_cmd
+from .voluntariado import register as register_voluntariado
 
 
 @click.group()
@@ -158,3 +159,5 @@ def reduzir(os_id: int, numero: str, total: int, executar: bool) -> None:
 
 
 sisdo.add_command(escala_cmd)
+
+register_voluntariado(sisdo)

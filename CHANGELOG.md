@@ -1,5 +1,14 @@
 # Histórico de versões
 
+## 1.1.0 — 2026-10-04
+
+- Repositório Institucional browserless: catálogo, fila paginada, validação offline, cadastro de manual PDF pendente e reconciliação por ID/URL/hash/status com diário local e bloqueio após resposta incerta.
+- SISDO voluntariado: consultas por competência/quartéis, perfil do próprio usuário e prévias preservando inscrições anteriores. Inclui inscrição própria aditiva explícita, com preservação das seleções, diário e confirmação por perfil após POST. Retirada/substituição e exportação definitiva permanecem desabilitadas.
+- Guia completo de agentes e referência gerada das opções reais; documentação de consultas versus escritas, autenticação, datas BRT, paginação, JSON e limites legados.
+- Login permite seleção explícita de endpoint oficial sem mudar configuração global; retorno não contém prévia de token.
+- CI Python3.12/3.13, testes sintéticos, build wheel/sdist e instalação/smoke limpos. Preserva funcionalidades/correções1.0.0. Sem publicação PyPI ou dados operacionais.
+
+
 ## 1.0.0
 
 Primeira release publicada no GitHub, reunindo as funcionalidades existentes

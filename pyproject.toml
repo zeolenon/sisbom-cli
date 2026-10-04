@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sisbom-cli"
-version = "1.0.0"
+version = "1.1.0"
+readme = "README.md"
 description = "CLI Python para interagir com o SISBOM (CBMRN) via GraphQL"
 requires-python = ">=3.12"
 dependencies = [
