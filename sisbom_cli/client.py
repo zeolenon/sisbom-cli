@@ -127,7 +127,7 @@ class SISBOMClient:
         self._token = sei_login["token"]
         save_token(self._token)
 
-        return {"ok": True, "token_preview": self._token[:20] + "...", "forca_id": sei_login["forca_id"]}
+        return {"ok": True, "forca_id": sei_login["forca_id"]}
 
     def me(self) -> dict | None:
         """Get current user info."""

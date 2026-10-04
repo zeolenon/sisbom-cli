@@ -23,3 +23,24 @@ class AuthTests(unittest.TestCase):
                 get_credentials()
         self.assertNotIn('synthetic-session', str(caught.exception))
         self.assertTrue(caught.exception.__suppress_context__)
+
+
+class LoginPrivacyTests(unittest.TestCase):
+    def test_fresh_login_result_has_no_token_or_preview(self):
+        from sisbom_cli.client import SISBOMClient
+        with SISBOMClient() as client, patch('sisbom_cli.client.load_token', return_value=None), patch('sisbom_cli.client.get_credentials', return_value=('synthetic', 'synthetic')), patch('sisbom_cli.client.save_token'), patch.object(client, '_gql', return_value={'seiLogin': {'token': 'synthetic-private-jwt', 'forca_id': 'synthetic-force'}}):
+            result = client.login()
+        self.assertTrue(result['ok'])
+        self.assertNotIn('token', result)
+        self.assertNotIn('token_preview', result)
+        self.assertNotIn('synthetic-private-jwt', json.dumps(result))
+
+    def test_login_endpoint_explicit_and_no_credentials_in_output(self):
+        from click.testing import CliRunner
+        from sisbom_cli.cli import cli
+        with patch('sisbom_cli.cli.SISBOMClient') as factory:
+            factory.return_value.__enter__.return_value.login.return_value = {'ok': True, 'cached': True}
+            result = CliRunner().invoke(cli, ['login', '--api-url', 'https://sisbom.cbm.rn.gov.br/api', '--json'])
+        self.assertEqual(result.exit_code, 0)
+        factory.assert_called_once_with(api_url='https://sisbom.cbm.rn.gov.br/api')
+        self.assertTrue(json.loads(result.output)['ok'])

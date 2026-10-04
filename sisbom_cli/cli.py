@@ -9,7 +9,9 @@ from rich.console import Console
 from rich.table import Table
 
 from .client import SISBOMClient
+from .config import API_URL
 from .commands.sisdo import sisdo
+from .commands.repositorio import repositorio
 
 console = Console()
 
@@ -28,10 +30,11 @@ def cli() -> None:
 
 
 @cli.command("login")
+@click.option("--api-url", type=click.Choice([API_URL, "https://sisbom.cbm.rn.gov.br/api"]), default=API_URL, show_default=True, help="Endpoint oficial de autenticação; seleção explícita, sem alterar configuração global.")
 @click.option("--json", "as_json", is_flag=True)
-def login_cmd(as_json: bool) -> None:
+def login_cmd(api_url: str, as_json: bool) -> None:
     """Login no SISBOM e obter token JWT."""
-    with SISBOMClient() as client:
+    with SISBOMClient(api_url=api_url) as client:
         result = client.login()
     if as_json:
         _emit(result, True)
@@ -1136,6 +1139,7 @@ def ferias_reaprazar_cmd(
 
 
 cli.add_command(sisdo)
+cli.add_command(repositorio)
 
 
 if __name__ == "__main__":
