@@ -7,7 +7,8 @@ from pathlib import Path
 
 # API endpoints
 API_URL = "https://us-central1-cfap-app.cloudfunctions.net/api_sisbom"
-API_BG = "https://us-central1-cfap-app.cloudfunctions.net/api_bg"
+# Public Boletins GraphQL service used by the current SISBOM web app.
+API_BG = "https://sisbom.cbm.rn.gov.br/api-bg"
 STORAGE_URL = "https://storage.cbm.rn.gov.br"
 WP_URL = "https://api.sisbom.cbm.rn.gov.br"
 

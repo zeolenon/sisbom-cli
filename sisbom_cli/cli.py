@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .client import SISBOMClient
+from .commands.sisdo import sisdo
 
 console = Console()
 
@@ -329,7 +330,6 @@ def mare_sisbom_cmd(date: str | None, as_json: bool) -> None:
 def bgs_cmd(year: str | None, num: str | None, limit: int, as_json: bool) -> None:
     """Listar Boletins Gerais disponíveis no SISBOM."""
     with SISBOMClient() as client:
-        client.login()
         result = client.list_bgs(year=year, bg_num=num)
 
     if not year and not num:
@@ -371,7 +371,6 @@ def bgs_cmd(year: str | None, num: str | None, limit: int, as_json: bool) -> Non
 def bg_download_cmd(bg_num: str, year: str | None, dest: str | None, as_json: bool) -> None:
     """Baixar um BG pelo número."""
     with SISBOMClient() as client:
-        client.login()
         bgs = client.list_bgs(year=year, bg_num=bg_num.zfill(3))
 
     if not bgs:
@@ -380,7 +379,6 @@ def bg_download_cmd(bg_num: str, year: str | None, dest: str | None, as_json: bo
 
     bg = bgs[0]
     with SISBOMClient() as client:
-        client.login()
         path = client.download_bg(bg, dest_dir=dest)
 
     if as_json:
@@ -507,11 +505,12 @@ def _funcao_label(f: str | None) -> str:
 @click.option("--date", "data", default=None, help="Data (YYYY-MM-DD), default=hoje")
 @click.option("--json", "as_json", is_flag=True)
 def mapa_forca_cmd(lotacao: str, data: str | None, as_json: bool) -> None:
-    """Mapa de Força — efetivo real de serviço."""
-    from datetime import date as dt_date
+    """Mapa de Força — militares e disposição nas viaturas registrados no SISBOM."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     if not data:
-        data = dt_date.today().isoformat()
+        data = datetime.now(ZoneInfo("America/Fortaleza")).date().isoformat()
 
     with SISBOMClient() as client:
         client.login()
@@ -1134,6 +1133,9 @@ def ferias_reaprazar_cmd(
         console.print(f"\n✅ Reaprazamento registrado com sucesso")
         if msg:
             console.print(f"   [dim]{msg}[/dim]")
+
+
+cli.add_command(sisdo)
 
 
 if __name__ == "__main__":
