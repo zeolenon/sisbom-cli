@@ -10,6 +10,7 @@ import httpx
 
 from .auth import get_credentials, load_token, save_token
 from .config import API_BG, API_URL, STORAGE_URL
+from .bulletins import normalize_regular_bg_number
 
 # GraphQL error messages that indicate an auth/token problem
 _AUTH_ERROR_KEYWORDS = (
@@ -773,43 +774,55 @@ class SISBOMClient:
     # --- Maré SISBOM ---
 
     def mare_sisbom(self, date: str | None = None) -> dict:
-        """Get tide data from SISBOM API (Natal/RN reference).
+        """Get SISBOM's Natal/RN tide table for the exact requested BRT date.
 
-        Uses the same Cloud Function the SISBOM Angular app uses.
-        Returns 3 days of tide data (yesterday, today, tomorrow).
-
-        Args:
-            date: Date in YYYY-MM-DD format. None = today.
-
-        Returns:
-            Dict with date, location, heights (list of {time, height}).
+        This public route is the one used by the current SISBOM application.
+        It needs no login and never substitutes another day's predictions.
         """
-        from datetime import date as date_cls
+        import math
+        import re
+        from datetime import date as date_cls, datetime
+        from zoneinfo import ZoneInfo
 
-        if not date:
-            date = date_cls.today().strftime("%Y-%m-%d")
+        timezone = "America/Fortaleza"
+        if date is None:
+            date = datetime.now(ZoneInfo(timezone)).date().isoformat()
+        try:
+            requested = date_cls.fromisoformat(date)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Tide date must use YYYY-MM-DD") from exc
+        if requested.isoformat() != date:
+            raise ValueError("Tide date must use YYYY-MM-DD")
 
-        url = f"{self._api_url}/ws/tide_table/{date}"
+        url = f"https://sisbom.cbm.rn.gov.br/api/ws/tide_table/{date}"
         r = self._http.get(url, timeout=15)
         if r.status_code != 200:
             raise RuntimeError(f"Failed to fetch SISBOM tide data: HTTP {r.status_code}")
 
         data = r.json()
-        # API returns 3 days: [yesterday, today, tomorrow]
-        today_data = None
-        for entry in data:
-            if entry.get("date") == date:
-                today_data = entry
-                break
-
-        if not today_data and data:
-            today_data = data[1] if len(data) > 1 else data[0]
+        if not isinstance(data, list):
+            raise RuntimeError("Invalid SISBOM tide response: expected a list of days")
+        matches = [entry for entry in data if isinstance(entry, dict) and entry.get("date") == date]
+        if len(matches) != 1:
+            raise RuntimeError(f"SISBOM tide data unavailable for {date}: expected exactly one matching day")
+        heights = matches[0].get("heights")
+        if not isinstance(heights, list) or not heights:
+            raise RuntimeError(f"SISBOM tide data unavailable for {date}: no heights")
+        for item in heights:
+            if not isinstance(item, dict):
+                raise RuntimeError(f"Invalid SISBOM tide entry for {date}")
+            hour, height = item.get("time"), item.get("height")
+            if not isinstance(hour, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", hour):
+                raise RuntimeError(f"Invalid SISBOM tide time for {date}")
+            if isinstance(height, bool) or not isinstance(height, (int, float)) or not math.isfinite(height):
+                raise RuntimeError(f"Invalid SISBOM tide height for {date}")
 
         return {
             "date": date,
             "location": "Natal/RN",
             "source": "sisbom",
-            "heights": today_data.get("heights", []) if today_data else [],
+            "timezone": timezone,
+            "heights": heights,
             "all_days": data,
         }
 
@@ -828,7 +841,8 @@ class SISBOMClient:
         variables: dict[str, Any] = {}
         if year:
             variables["year"] = year
-        if bg_num:
+        regular_requested = normalize_regular_bg_number(bg_num)
+        if bg_num and regular_requested is None:
             variables["bg_num"] = bg_num
 
         query = """query Docs($year: String, $bg_num: String) {
@@ -843,13 +857,25 @@ class SISBOMClient:
             }
         }"""
 
-        result = self._gql_url(API_BG, query, variables=variables or None)
-        docs = result.get("Docs", [])
+        # The bulletin catalog is public; do not force the unrelated SISBOM
+        # login flow before querying it.
+        result = self._gql_url_raw(API_BG, query, variables=variables or None)
+        docs = []
+        for source_doc in result.get("Docs", []):
+            raw_number = source_doc.get("bg_num")
+            regular_number = normalize_regular_bg_number(raw_number)
+            doc = source_doc
+            if regular_number is not None:
+                doc = {**source_doc, "bg_num": regular_number, "source_bg_num": raw_number}
+            if regular_requested is None or regular_number == regular_requested:
+                docs.append(doc)
 
         # Sort by year desc, bg_num desc
         def sort_key(d: dict) -> tuple:
             try:
-                return (-int(d.get("year", 0)), -int(d.get("bg_num", "0").replace(" ", "").split()[0]))
+                bg_parts = (d.get("bg_num") or "0").replace(" ", "").split()
+                bg_num = bg_parts[0] if bg_parts else "0"
+                return (-int(d.get("year", 0)), -int(bg_num))
             except (ValueError, TypeError):
                 return (0, 0)
 
@@ -878,7 +904,7 @@ class SISBOMClient:
         # Build filename: BG_040_2026-03-06.pdf or BG_Adit_039_2026-03-05.pdf
         bg_num = bg.get("bg_num", "").strip()
         year = bg.get("year", "")
-        safe_num = bg_num.replace(" ", "_")
+        safe_num = normalize_regular_bg_number(bg_num) or bg_num.replace(" ", "_")
 
         # Include date from date_ref if available
         date_ref = bg.get("date_ref")

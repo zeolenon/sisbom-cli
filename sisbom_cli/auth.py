@@ -28,12 +28,29 @@ def get_credentials() -> tuple[str, str]:
         (cpf, password) tuple.
     """
     session = _get_bw_session()
-    result = subprocess.check_output(
-        ["bw", "get", "item", BW_ITEM_NAME, "--session", session],
-        text=True,
-        timeout=15,
-    )
-    item = json.loads(result)
+    bw_env = os.environ.copy()
+    bw_env["BW_SESSION"] = session
+
+    item = None
+    for timeout_s in (15, 30):
+        try:
+            result = subprocess.check_output(
+                ["bw", "get", "item", BW_ITEM_NAME],
+                text=True,
+                timeout=timeout_s,
+                env=bw_env,
+                stderr=subprocess.DEVNULL,
+            )
+            item = json.loads(result)
+            break
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
+            time.sleep(2)
+    if item is None:
+        # Keep credential-provider failures out of the exception chain.
+        raise RuntimeError(
+            f"Bitwarden indisponível ao ler '{BW_ITEM_NAME}' após 2 tentativas"
+        ) from None
+
     password = item["login"]["password"]
 
     # Try to get CPF: check custom fields, then env var, then username
