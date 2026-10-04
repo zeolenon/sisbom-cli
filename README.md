@@ -9,9 +9,9 @@ Sem browser. Sem Playwright. Puro `httpx`.
 ## Instalação
 
 ```bash
-git clone <este-repo>
-cd sisbom-cli
-pip install -e .
+python3 -m venv ~/.venvs/sisbom-cli
+~/.venvs/sisbom-cli/bin/python -m pip install "sisbom-cli @ git+https://github.com/zeolenon/sisbom-cli.git@v1.0.0"
+~/.venvs/sisbom-cli/bin/sisbom --help
 ```
 
 ### Dependências
@@ -20,6 +20,17 @@ pip install -e .
 - httpx (HTTP client)
 - click (CLI framework)
 - rich (tabelas formatadas no terminal)
+
+## Novidades da versão 1.0.0
+
+- SISDO via HTTPX/SSO: consultar OSs, criar OS digitada, incluir/remover militares, definir funções, ajustar vagas e baixar PDF oficial. Escritas usam prévia por padrão e exigem `--executar`.
+- Reconciliação de diárias Escalador → SISDO com modelo, vínculos explícitos e hashes de conferência; exige cliente de consultas externo e configuração privada.
+- Mapa de força SISBOM com militares, funções e disposição nas viaturas; registros do sistema não comprovam presença independentemente.
+- Catálogo público de BGs e download com normalização de números como `BG 182`, preservando aditamentos.
+- Maré SISBOM na rota pública atual, com validação do dia exato no fuso de Fortaleza.
+- Sessão Bitwarden transmitida pelo ambiente, sem token nos argumentos do processo.
+
+Consulte [SISDO, validação e limites](docs/sisdo-httpx.md).
 
 ## Autenticação
 
